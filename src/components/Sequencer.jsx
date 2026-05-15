@@ -118,6 +118,16 @@ const reorderItemsFromDrop = (items, fromIndex, dropIndex) => {
   return nextItems;
 };
 
+const getDropIndexFromPointer = (container, clientY, itemSelector) => {
+  const items = Array.from(container.querySelectorAll(itemSelector));
+  const hoveredIndex = items.findIndex((item) => {
+    const rect = item.getBoundingClientRect();
+    return clientY < rect.top + rect.height / 2;
+  });
+
+  return hoveredIndex === -1 ? items.length : hoveredIndex;
+};
+
 const renderLoopsToMp3 = async (loops, bpm) => {
   const Mp3Encoder = await loadMp3Encoder();
   const stepSeconds = 60 / bpm / 4;
@@ -213,6 +223,7 @@ export default function Sequencer() {
   const bpmRef = useRef(bpm);
   const synthRef = useRef(null);
   const sequenceRef = useRef(null);
+  const playbackSessionRef = useRef(0);
 
   const activeDraft = useMemo(
     () => drafts.find((draft) => draft.id === activeDraftId) ?? null,
@@ -234,12 +245,12 @@ export default function Sequencer() {
     [activeDraft, savedLoops]
   );
 
-  const displayedGrid = previewGrid ?? grid;
   const editingLoop = savedLoops.find((loop) => loop.id === editingLoopId);
   const isPlayingLoop = playbackMode === 'loop';
   const isPlayingArrangement = playbackMode === 'arrangement';
   const isPlayingDraft = playbackMode === 'draft';
   const isPlaying = Boolean(playbackMode);
+  const displayedGrid = isPlaying ? previewGrid ?? grid : grid;
 
   useEffect(() => {
     gridRef.current = grid;
@@ -272,6 +283,7 @@ export default function Sequencer() {
   }, []);
 
   const stopPlayback = (message = 'Playback stopped') => {
+    playbackSessionRef.current += 1;
     sequenceRef.current?.stop();
     sequenceRef.current?.dispose();
     sequenceRef.current = null;
@@ -288,6 +300,8 @@ export default function Sequencer() {
   const startPlayback = async (loops, mode) => {
     await Tone.start();
 
+    const playbackSession = playbackSessionRef.current + 1;
+    playbackSessionRef.current = playbackSession;
     sequenceRef.current?.dispose();
     Tone.Transport.stop();
     Tone.Transport.cancel();
@@ -313,6 +327,10 @@ export default function Sequencer() {
         }
 
         Tone.Draw.schedule(() => {
+          if (playbackSessionRef.current !== playbackSession) {
+            return;
+          }
+
           setActiveStep(step);
           setActiveSequenceIndex(mode === 'loop' ? -1 : loopIndex);
           setPreviewGrid(loop.grid);
@@ -655,7 +673,40 @@ export default function Sequencer() {
 
     setDraggedLoopId(null);
     setDraggedArrangeIndex(null);
+    setDraggedDraftIndex(null);
     setArrangementDropIndex(null);
+  };
+
+  const clearDragState = () => {
+    setDraggedLoopId(null);
+    setDraggedArrangeIndex(null);
+    setDraggedDraftIndex(null);
+    setArrangementDropIndex(null);
+    setDraftDropIndex(null);
+  };
+
+  const handleArrangementDragOver = (event) => {
+    event.preventDefault();
+    const dropIndex = getDropIndexFromPointer(
+      event.currentTarget,
+      event.clientY,
+      '[data-arrangement-item]'
+    );
+    const isNoopMove =
+      Number.isInteger(draggedArrangeIndex) &&
+      (dropIndex === draggedArrangeIndex || dropIndex === draggedArrangeIndex + 1);
+    setArrangementDropIndex(isNoopMove ? null : dropIndex);
+  };
+
+  const handleArrangementContainerDrop = (event) => {
+    const dropIndex =
+      arrangementDropIndex ??
+      getDropIndexFromPointer(
+        event.currentTarget,
+        event.clientY,
+        '[data-arrangement-item]'
+      );
+    handleArrangementDrop(event, dropIndex);
   };
 
   const handleDraftDrop = (event, dropIndex = activeDraft?.items.length ?? 0) => {
@@ -682,8 +733,29 @@ export default function Sequencer() {
     }
 
     setDraggedLoopId(null);
+    setDraggedArrangeIndex(null);
     setDraggedDraftIndex(null);
     setDraftDropIndex(null);
+  };
+
+  const handleDraftDragOver = (event) => {
+    event.preventDefault();
+    const dropIndex = getDropIndexFromPointer(
+      event.currentTarget,
+      event.clientY,
+      '[data-draft-item]'
+    );
+    const isNoopMove =
+      Number.isInteger(draggedDraftIndex) &&
+      (dropIndex === draggedDraftIndex || dropIndex === draggedDraftIndex + 1);
+    setDraftDropIndex(isNoopMove ? null : dropIndex);
+  };
+
+  const handleDraftContainerDrop = (event) => {
+    const dropIndex =
+      draftDropIndex ??
+      getDropIndexFromPointer(event.currentTarget, event.clientY, '[data-draft-item]');
+    handleDraftDrop(event, dropIndex);
   };
 
   const downloadMp3 = async () => {
@@ -743,8 +815,12 @@ export default function Sequencer() {
                   isEditing={loop.id === editingLoopId}
                   onDragStart={(event) => {
                     event.dataTransfer.setData('loop-id', loop.id);
+                    event.dataTransfer.effectAllowed = 'copy';
                     setDraggedLoopId(loop.id);
+                    setDraggedArrangeIndex(null);
+                    setDraggedDraftIndex(null);
                   }}
+                  onDragEnd={clearDragState}
                   onAdd={() => addLoopToArrangement(loop.id)}
                   onLoad={() => loadLoop(loop)}
                   onRename={(nextName) => renameLoop(loop.id, nextName)}
@@ -802,8 +878,8 @@ export default function Sequencer() {
             {activeDraft ? (
               <>
                 <div
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => handleDraftDrop(event)}
+                  onDragOver={handleDraftDragOver}
+                  onDrop={handleDraftContainerDrop}
                   onDragLeave={(event) => {
                     if (event.currentTarget === event.target) {
                       setDraftDropIndex(null);
@@ -826,18 +902,20 @@ export default function Sequencer() {
                           <div key={item.id} className="flex flex-col gap-2">
                             <InsertionZone
                               isActive={draftDropIndex === index}
-                              onDragEnter={() => setDraftDropIndex(index)}
-                              onDragOver={() => setDraftDropIndex(index)}
-                              onDrop={(event) => handleDraftDrop(event, index)}
                             />
                             <SequenceItem
+                              itemType="draft"
                               index={index}
                               loop={loop}
                               isActive={isPlayingDraft && activeSequenceIndex === index}
                               onDragStart={(event) => {
                                 event.dataTransfer.setData('draft-index', String(index));
+                                event.dataTransfer.effectAllowed = 'move';
+                                setDraggedLoopId(null);
+                                setDraggedArrangeIndex(null);
                                 setDraggedDraftIndex(index);
                               }}
+                              onDragEnd={clearDragState}
                               onEdit={() => loadLoop(loop)}
                               onMoveUp={() => moveDraftItem(index, -1)}
                               onMoveDown={() => moveDraftItem(index, 1)}
@@ -850,11 +928,6 @@ export default function Sequencer() {
                       })}
                       <InsertionZone
                         isActive={draftDropIndex === activeDraft.items.length}
-                        onDragEnter={() => setDraftDropIndex(activeDraft.items.length)}
-                        onDragOver={() => setDraftDropIndex(activeDraft.items.length)}
-                        onDrop={(event) =>
-                          handleDraftDrop(event, activeDraft.items.length)
-                        }
                       />
                     </>
                   ) : (
@@ -878,8 +951,8 @@ export default function Sequencer() {
 
         <Panel title="Arrangement">
           <div
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => handleArrangementDrop(event)}
+            onDragOver={handleArrangementDragOver}
+            onDrop={handleArrangementContainerDrop}
             onDragLeave={(event) => {
               if (event.currentTarget === event.target) {
                 setArrangementDropIndex(null);
@@ -900,18 +973,20 @@ export default function Sequencer() {
                     <div key={item.id} className="flex flex-col gap-2">
                       <InsertionZone
                         isActive={arrangementDropIndex === index}
-                        onDragEnter={() => setArrangementDropIndex(index)}
-                        onDragOver={() => setArrangementDropIndex(index)}
-                        onDrop={(event) => handleArrangementDrop(event, index)}
                       />
                       <SequenceItem
+                        itemType="arrangement"
                         index={index}
                         loop={loop}
                         isActive={isPlayingArrangement && activeSequenceIndex === index}
                         onDragStart={(event) => {
                           event.dataTransfer.setData('arrangement-index', String(index));
+                          event.dataTransfer.effectAllowed = 'move';
+                          setDraggedLoopId(null);
                           setDraggedArrangeIndex(index);
+                          setDraggedDraftIndex(null);
                         }}
+                        onDragEnd={clearDragState}
                         onEdit={() => loadLoop(loop)}
                         onMoveUp={() => moveArrangementItem(index, -1)}
                         onMoveDown={() => moveArrangementItem(index, 1)}
@@ -924,9 +999,6 @@ export default function Sequencer() {
                 })}
                 <InsertionZone
                   isActive={arrangementDropIndex === arrangement.length}
-                  onDragEnter={() => setArrangementDropIndex(arrangement.length)}
-                  onDragOver={() => setArrangementDropIndex(arrangement.length)}
-                  onDrop={(event) => handleArrangementDrop(event, arrangement.length)}
                 />
               </>
             ) : (
@@ -951,7 +1023,7 @@ export default function Sequencer() {
         </div>
       ) : null}
 
-      <Panel title={previewGrid ? 'Playing Grid' : 'Editor Grid'}>
+      <Panel title={isPlaying ? 'Playing Grid' : 'Editor Grid'}>
         <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_280px] lg:items-center">
           <div className="flex flex-wrap items-center gap-3">
             <button
@@ -1003,7 +1075,7 @@ export default function Sequencer() {
 
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-[#c4c4a4]">
           <span>
-            {previewGrid
+            {isPlaying
               ? `Now playing ${playingName}`
               : 'Click bits to edit the current loop'}
           </span>
@@ -1033,7 +1105,7 @@ export default function Sequencer() {
                 row={displayedGrid[rowIndex]}
                 rowIndex={rowIndex}
                 activeStep={activeStep}
-                isPreviewing={Boolean(previewGrid)}
+                isPreviewing={isPlaying}
                 onToggle={toggleBit}
               />
             ))}
@@ -1067,6 +1139,7 @@ function LoopCard({
   loop,
   isEditing,
   onDragStart,
+  onDragEnd,
   onAdd,
   onLoad,
   onRename,
@@ -1076,6 +1149,7 @@ function LoopCard({
     <article
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={`cursor-grab border-2 p-3 active:cursor-grabbing ${
         isEditing
           ? 'border-[#ffe66d] bg-[#3b3724]'
@@ -1180,19 +1254,10 @@ function EditableTitle({ value, onSave }) {
   );
 }
 
-function InsertionZone({ isActive, onDragEnter, onDragOver, onDrop }) {
+function InsertionZone({ isActive }) {
   return (
     <div
-      onDragEnter={(event) => {
-        event.preventDefault();
-        onDragEnter();
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        onDragOver();
-      }}
-      onDrop={onDrop}
-      className={`relative h-2 transition ${
+      className={`pointer-events-none relative h-2 transition ${
         isActive ? 'my-2 opacity-100' : '-my-1 opacity-0'
       }`}
     >
@@ -1206,10 +1271,12 @@ function InsertionZone({ isActive, onDragEnter, onDragOver, onDrop }) {
 }
 
 function SequenceItem({
+  itemType,
   index,
   loop,
   isActive,
   onDragStart,
+  onDragEnd,
   onEdit,
   onMoveUp,
   onMoveDown,
@@ -1219,8 +1286,11 @@ function SequenceItem({
 }) {
   return (
     <article
+      data-arrangement-item={itemType === 'arrangement' ? 'true' : undefined}
+      data-draft-item={itemType === 'draft' ? 'true' : undefined}
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={`cursor-grab border-2 p-3 active:cursor-grabbing ${
         isActive
           ? 'border-[#ffe66d] bg-[#3b3724]'
