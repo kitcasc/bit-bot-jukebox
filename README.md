@@ -1,4 +1,4 @@
-# Bit-Bot Jukebox
+# Bit-Bot Jukebox 👾
 
 Bit-Bot Jukebox is an 8-bit style browser music sketchpad. Users edit 16-step loops, save them into a loop library, arrange selected loops into a song order, save arrangement drafts, preview the editor loop, a draft, or the full arrangement, and export only the arranged loops as an MP3.
 
