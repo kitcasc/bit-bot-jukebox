@@ -796,6 +796,11 @@ export default function Sequencer() {
         ? draftLoops[activeSequenceIndex]?.name
         : 'editor loop';
 
+  const playNotePreview = async (note) => {
+    await Tone.start();
+    synthRef.current.triggerAttackRelease(note, '8n');
+  };
+
   return (
     <section className="flex flex-1 flex-col gap-5">
       <div className="font-mono text-xs text-[#c4c4a4]">
@@ -1107,6 +1112,7 @@ export default function Sequencer() {
                 activeStep={activeStep}
                 isPreviewing={isPlaying}
                 onToggle={toggleBit}
+                onNotePreview={playNotePreview}
               />
             ))}
           </div>
@@ -1371,12 +1377,17 @@ function IconButton({ label, disabled = false, onClick, children }) {
   );
 }
 
-function Row({ note, row, rowIndex, activeStep, isPreviewing, onToggle }) {
+function Row({ note, row, rowIndex, activeStep, isPreviewing, onToggle, onNotePreview }) {
   return (
     <>
-      <div className="flex h-9 items-center justify-end pr-2 font-mono text-xs text-[#65e4a3]">
+      <button
+        type="button"
+        onClick={() => onNotePreview(note)}
+        title={`Play ${note}`}
+        className="flex h-9 items-center justify-end pr-2 font-mono text-xs text-[#65e4a3] transition hover:bg-[#2b4b2b] hover:shadow-[inset_0_0_8px_rgba(101,228,163,0.3)] active:shadow-[inset_0_0_12px_rgba(101,228,163,0.5)]"
+      >
         {note}
-      </div>
+      </button>
       {row.map((isActive, stepIndex) => (
         <button
           key={`${note}-${stepIndex}`}
